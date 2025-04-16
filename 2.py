@@ -20,6 +20,9 @@ class Letter3D:
         self.transformed_vertices = []  # Вершины в глобальных координатах
         self.edges = []
         self.faces = []
+        self.center_point = [0, 0, 0]  # Точка центра буквы в локальных координатах
+        self.transformed_center_point = [0, 0, 0]  # Точка центра в глобальных координатах
+        self.show_center = True  # Показывать или нет точку центра
         self.update_geometry()
     
     def transform_vertex(self, vertex):
@@ -57,111 +60,275 @@ class Letter3D:
         ]
 
     def update_geometry(self):
-        if self.letter == 'D':
-            self.create_letter_d()
+        if self.letter == 'С':
+            self.create_letter_c()
+        elif self.letter == 'Д':
+            self.create_letter_de()
+        
+        # Вычисляем точку центра буквы (относительные координаты)
+        self.calculate_center_point()
+        
         # После создания геометрии обновляем трансформированные вершины
         self.transformed_vertices = [self.transform_vertex(v) for v in self.vertices]
+        # Обновляем трансформированную точку центра
+        self.transformed_center_point = self.transform_vertex(self.center_point)
     
-    def create_letter_d(self):
+    def calculate_center_point(self):
+        """Вычисляет точку центра буквы в локальных координатах"""
+        if self.letter == 'С':
+            # Для буквы С центр смещаем внутрь полукруга
+            self.center_point = [self.width * 0.6, self.height * 0.5, self.depth / 2]
+        elif self.letter == 'Д':
+            # Для буквы Д центр смещаем внутрь центральной части
+            self.center_point = [self.width / 2, self.height * 0.4, self.depth / 2]
+    
+    def toggle_center_point(self):
+        """Включает/выключает отображение точки центра"""
+        self.show_center = not self.show_center
+        return self.show_center
+    
+    def create_letter_c(self):
+        """Создает букву C (кириллическая С)"""
         self.vertices = []
         self.edges = []
         self.faces = []
         
+        h = self.height
+        w = self.width
+        d = self.depth
+        t = w * 0.15  # толщина стенки
+        
+        # Улучшенная версия русской буквы С
+        segments = 14  # увеличиваем число сегментов для более гладкой формы
+        
         # Внешний контур - передняя часть
-        front_outer = [
-            [0, 0, 0],
-            [0, self.height, 0],
-            [self.width, self.height * 0.75, 0],
-            [self.width, self.height * 0.25, 0]
-        ]
+        front_outer = []
+        for i in range(segments+1):
+            # Используем дугу 220 градусов вместо 180 для более закругленной С
+            angle = math.radians(110) - math.radians(220) * i / segments
+            # Смещаем центр дуги для более естественной формы
+            x = w * 0.6 + w * 0.4 * math.cos(angle)
+            y = h * 0.5 + h * 0.5 * math.sin(angle)
+            front_outer.append([x, y, 0])
         
         # Внутренний контур - передняя часть
-        front_inner = [
-            [self.width * 0.3, self.height * 0.25, 0],
-            [self.width * 0.3, self.height * 0.75, 0],
-            [self.width * 0.8, self.height * 0.65, 0],
-            [self.width * 0.8, self.height * 0.35, 0]
-        ]
+        front_inner = []
+        for i in range(segments+1):
+            angle = math.radians(110) - math.radians(220) * i / segments
+            # Уменьшаем радиус для внутреннего контура
+            x = w * 0.6 + (w * 0.4 - t) * math.cos(angle)
+            y = h * 0.5 + (h * 0.5 - t) * math.sin(angle)
+            front_inner.append([x, y, 0])
         
         # Создаем заднюю часть
-        back_outer = [[v[0], v[1], v[2] + self.depth] for v in front_outer]
-        back_inner = [[v[0], v[1], v[2] + self.depth] for v in front_inner]
+        back_outer = [[v[0], v[1], v[2] + d] for v in front_outer]
+        back_inner = [[v[0], v[1], v[2] + d] for v in front_inner]
         
-        # Сохраняем вершины в локальных координатах
+        # Сохраняем вершины
         self.vertices = front_outer + front_inner + back_outer + back_inner
+        
+        # Соединяем вершины ребрами
+        def add_edge(v1, v2):
+            edge = (min(v1, v2), max(v1, v2))
+            if edge not in self.edges:
+                self.edges.append(edge)
+        
+        # Соединяем внешний контур спереди
+        for i in range(len(front_outer) - 1):
+            add_edge(i, i + 1)
+        
+        # Соединяем внутренний контур спереди
+        inner_offset = len(front_outer)
+        for i in range(len(front_inner) - 1):
+            add_edge(inner_offset + i, inner_offset + i + 1)
+        
+        # Соединяем внешний контур сзади
+        back_offset = inner_offset + len(front_inner)
+        for i in range(len(back_outer) - 1):
+            add_edge(back_offset + i, back_offset + i + 1)
+        
+        # Соединяем внутренний контур сзади
+        back_inner_offset = back_offset + len(back_outer)
+        for i in range(len(back_inner) - 1):
+            add_edge(back_inner_offset + i, back_inner_offset + i + 1)
+        
+        # Соединяем переднюю и заднюю части
+        # Соединяем верхний и нижний края
+        add_edge(0, back_offset)  # верхний край внешний
+        add_edge(len(front_outer) - 1, back_offset + len(back_outer) - 1)  # нижний край внешний
+        add_edge(inner_offset, back_inner_offset)  # верхний край внутренний
+        add_edge(inner_offset + len(front_inner) - 1, back_inner_offset + len(back_inner) - 1)  # нижний край внутренний
+        
+        # Добавляем соединения между внешним и внутренним контурами на краях
+        add_edge(0, inner_offset)  # верхний край спереди
+        add_edge(len(front_outer) - 1, inner_offset + len(front_inner) - 1)  # нижний край спереди
+        add_edge(back_offset, back_inner_offset)  # верхний край сзади
+        add_edge(back_offset + len(back_outer) - 1, back_inner_offset + len(back_inner) - 1)  # нижний край сзади
+        
+        # Добавляем дополнительные соединения между внешним и внутренним контурами
+        # Выбираем несколько ключевых точек для соединения, чтобы не перегружать модель
+        connection_points = [segments // 4, segments // 2, 3 * segments // 4]
+        
+        for i in connection_points:
+            # Соединяем точки на передней грани
+            add_edge(i, inner_offset + i)
+            # Соединяем точки на задней грани
+            add_edge(back_offset + i, back_inner_offset + i)
+            
+            # Дополнительно соединяем соответствующие точки на передней и задней гранях
+            # для создания "перегородок" внутри буквы
+            add_edge(i, back_offset + i)
+            add_edge(inner_offset + i, back_inner_offset + i)
+            
+        # Добавляем грани
+        self.faces = [
+            # Передние грани
+            {'vertices': front_outer, 'normal': [0, 0, -1]},
+            {'vertices': front_inner, 'normal': [0, 0, 1]},
+            
+            # Задние грани
+            {'vertices': [v for v in reversed(back_outer)], 'normal': [0, 0, 1]},
+            {'vertices': [v for v in reversed(back_inner)], 'normal': [0, 0, -1]},
+            
+            # Боковые грани (верхняя и нижняя)
+            {'vertices': [front_outer[0], front_inner[0], back_inner[0], back_outer[0]], 
+             'normal': [0, 1, 0]},  # верхняя грань
+            {'vertices': [front_outer[-1], front_inner[-1], back_inner[-1], back_outer[-1]], 
+             'normal': [0, -1, 0]},  # нижняя грань
+        ]
+        
+        # Добавляем "перегородки" в качестве граней для лучшей визуализации
+        for i in connection_points:
+            # Добавляем перегородку
+            self.faces.append({
+                'vertices': [
+                    front_outer[i], 
+                    front_inner[i], 
+                    back_inner[i],
+                    back_outer[i]
+                ],
+                'normal': [math.sin(math.radians(110) - math.radians(220) * i / segments), 
+                          -math.cos(math.radians(110) - math.radians(220) * i / segments), 
+                          0]
+            })
 
+    def create_letter_de(self):
+        """Создает букву Д (кириллическая Д)"""
+        self.vertices = []
+        self.edges = []
+        self.faces = []
+        
+        h = self.height
+        w = self.width
+        d = self.depth
+        leg_h = h * 0.15  # высота ножек
+        leg_w = w * 0.1   # ширина выступа ножек
+        t = w * 0.15      # толщина стенок
+        
+        # Основные точки буквы Д (передняя часть)
+        
+        # Основной прямоугольник с ножками (внешний контур)
+        front_outer = [
+            [-leg_w, -leg_h, 0],        # низ левой ножки 
+            [w + leg_w, -leg_h, 0],     # низ правой ножки
+            [w + leg_w, 0, 0],          # низ правой стенки
+            [w, 0, 0],                  # внутренний низ правой стенки
+            [w, h - t, 0],              # верх правой стенки
+            [0, h - t, 0],              # верх левой стенки
+            [0, 0, 0],                  # внутренний низ левой стенки
+            [-leg_w, 0, 0]              # низ левой стенки
+        ]
+        
+        # Верхняя перекладина (крыша)
+        front_roof = [
+            [0, h - t, 0],              # левый край крыши
+            [w, h - t, 0],              # правый край крыши
+            [w - t, h, 0],              # правый верхний угол
+            [t, h, 0]                   # левый верхний угол
+        ]
+        
+        # Внутренний прямоугольник (полость)
+        front_inner = [
+            [t, t, 0],                  # нижний левый
+            [w - t, t, 0],              # нижний правый
+            [w - t, h - t * 2, 0],      # верхний правый
+            [t, h - t * 2, 0]           # верхний левый
+        ]
+        
+        # Задние контуры
+        back_outer = [[v[0], v[1], v[2] + d] for v in front_outer]
+        back_roof = [[v[0], v[1], v[2] + d] for v in front_roof]
+        back_inner = [[v[0], v[1], v[2] + d] for v in front_inner]
+        
+        # Сохраняем вершины
+        self.vertices = front_outer + front_roof + front_inner + back_outer + back_roof + back_inner
+        
         # Функция для добавления ребра
         def add_edge(v1_idx, v2_idx):
             edge = (min(v1_idx, v2_idx), max(v1_idx, v2_idx))
             if edge not in self.edges:
                 self.edges.append(edge)
-
-        # Добавляем ребра для внешнего контура (спереди)
+                
+        # Соединяем внешний контур (передний)
         for i in range(len(front_outer)):
             add_edge(i, (i + 1) % len(front_outer))
-
-        # Добавляем ребра для внутреннего контура (спереди)
+            
+        # Соединяем крышу (передняя)
+        roof_offset = len(front_outer)
+        for i in range(len(front_roof)):
+            add_edge(roof_offset + i, roof_offset + (i + 1) % len(front_roof))
+            
+        # Соединяем внутренний контур (передний)
+        inner_offset = roof_offset + len(front_roof)
         for i in range(len(front_inner)):
-            add_edge(i + len(front_outer), 
-                    ((i + 1) % len(front_inner)) + len(front_outer))
-
-        # Добавляем ребра для внешнего контура (сзади)
+            add_edge(inner_offset + i, inner_offset + (i + 1) % len(front_inner))
+            
+        # Соединяем внешний контур (задний)
+        back_offset = inner_offset + len(front_inner)
         for i in range(len(back_outer)):
-            add_edge(i + len(front_outer) * 2, 
-                    ((i + 1) % len(back_outer)) + len(front_outer) * 2)
-
-        # Добавляем ребра для внутреннего контура (сзади)
+            add_edge(back_offset + i, back_offset + (i + 1) % len(back_outer))
+            
+        # Соединяем крышу (задняя)
+        back_roof_offset = back_offset + len(back_outer)
+        for i in range(len(back_roof)):
+            add_edge(back_roof_offset + i, back_roof_offset + (i + 1) % len(back_roof))
+            
+        # Соединяем внутренний контур (задний)
+        back_inner_offset = back_roof_offset + len(back_roof)
         for i in range(len(back_inner)):
-            add_edge(i + len(front_outer) * 3, 
-                    ((i + 1) % len(back_inner)) + len(front_outer) * 3)
-
-        # Добавляем соединяющие ребра между передней и задней частью (внешний контур)
+            add_edge(back_inner_offset + i, back_inner_offset + (i + 1) % len(back_inner))
+            
+        # Соединяем переднюю и заднюю части
+        # Внешний контур
         for i in range(len(front_outer)):
-            add_edge(i, i + len(front_outer) * 2)
-
-        # Добавляем соединяющие ребра между передней и задней частью (внутренний контур)
+            add_edge(i, back_offset + i)
+            
+        # Крыша
+        for i in range(len(front_roof)):
+            add_edge(roof_offset + i, back_roof_offset + i)
+            
+        # Внутренний контур
         for i in range(len(front_inner)):
-            add_edge(i + len(front_outer), i + len(front_outer) * 3)
-
-        # Добавляем соединяющие ребра между внешним и внутренним контуром (спереди)
-        for i in range(len(front_outer)):
-            add_edge(i, i + len(front_outer))
-
-        # Добавляем соединяющие ребра между внешним и внутренним контуром (сзади)
-        for i in range(len(back_outer)):
-            add_edge(i + len(front_outer) * 2, i + len(front_outer) * 3)
-
-        # Создаем грани
-        # Передняя грань (внешняя)
-        self.faces.append({
-            'vertices': front_outer,
-            'edges': [(i, (i + 1) % len(front_outer)) for i in range(len(front_outer))],
-            'normal': [0, 0, -1]
-        })
+            add_edge(inner_offset + i, back_inner_offset + i)
+            
+        # Соединяем крышу с основным контуром
+        add_edge(5, roof_offset)        # левый угол
+        add_edge(4, roof_offset + 1)    # правый угол
+        add_edge(back_offset + 5, back_roof_offset)     # левый задний угол
+        add_edge(back_offset + 4, back_roof_offset + 1) # правый задний угол
         
-        # Передняя грань (внутренняя)
-        self.faces.append({
-            'vertices': list(reversed(front_inner)),
-            'edges': [(i + len(front_outer), ((i + 1) % len(front_inner)) + len(front_outer)) 
-                     for i in range(len(front_inner))],
-            'normal': [0, 0, -1]
-        })
-        
-        # Задняя грань (внешняя)
-        self.faces.append({
-            'vertices': list(reversed(back_outer)),
-            'edges': [(i + len(front_outer) * 2, ((i + 1) % len(back_outer)) + len(front_outer) * 2) 
-                     for i in range(len(back_outer))],
-            'normal': [0, 0, 1]
-        })
-        
-        # Задняя грань (внутренняя)
-        self.faces.append({
-            'vertices': back_inner,
-            'edges': [(i + len(front_outer) * 3, ((i + 1) % len(back_inner)) + len(front_outer) * 3) 
-                     for i in range(len(back_inner))],
-            'normal': [0, 0, 1]
-        })
+        # Добавляем грани
+        self.faces = [
+            # Передние грани
+            {'vertices': front_outer, 'normal': [0, 0, -1]},
+            {'vertices': front_roof, 'normal': [0, 0, -1]},
+            {'vertices': front_inner, 'normal': [0, 0, 1]},
+            
+            # Задние грани
+            {'vertices': back_outer, 'normal': [0, 0, 1]},
+            {'vertices': back_roof, 'normal': [0, 0, 1]},
+            {'vertices': back_inner, 'normal': [0, 0, -1]},
+        ]
 
     def reflect(self, axis):
         if axis == 'x':
@@ -209,10 +376,13 @@ class ViewerWidget(QWidget):
         self.rotation_step = 5  # Начальный шаг поворота в градусах
         
         # Добавляем буквы
-        self.add_letter('D', 4, 2, 1)
+        self.add_letter('С', 4, 2, 1, position=[-3, 0, 0])
+        self.add_letter('Д', 4, 2, 1, position=[3, 0, 0])
     
-    def add_letter(self, letter, height, width, depth):
+    def add_letter(self, letter, height, width, depth, position=None):
         new_letter = Letter3D(letter, height, width, depth)
+        if position:
+            new_letter.position = position
         self.letters.append(new_letter)
         if not self.selected_letter:
             self.selected_letter = new_letter
@@ -368,9 +538,19 @@ class ViewerWidget(QWidget):
                 
                 if p1 and p2:
                     painter.drawLine(p1, p2)
+            
+            # Рисуем точку центра буквы, если включено отображение
+            if hasattr(letter, 'show_center') and letter.show_center:
+                center_point = self.project_point(letter.transformed_center_point)
+                if center_point:
+                    # Используем красный цвет для точки центра
+                    painter.setPen(QPen(Qt.red, 6))
+                    painter.setBrush(QColor(255, 0, 0))  # Заполняем красным цветом
+                    # Рисуем точку большего размера (6 пикселей)
+                    painter.drawEllipse(center_point, 3, 3)
 
     def mousePressEvent(self, event):
-        self.last_pos = event.pos()
+        self.last_pos = QPoint(int(event.position().x()), int(event.position().y()))
         self.mouse_pressed = True
 
     def mouseReleaseEvent(self, event):
@@ -380,7 +560,7 @@ class ViewerWidget(QWidget):
         if not self.mouse_pressed:
             return
             
-        current_pos = event.pos()
+        current_pos = QPoint(int(event.position().x()), int(event.position().y()))
         dx = current_pos.x() - self.last_pos.x()
         dy = current_pos.y() - self.last_pos.y()
         
@@ -395,6 +575,8 @@ class ViewerWidget(QWidget):
                     self.selected_letter.position[2] -= dy * 0.1
                 else:  # Перемещение по глобальной X (влево/вправо)
                     self.selected_letter.position[0] += dx * 0.1
+                # После перемещения обновляем трансформированные вершины
+                self.selected_letter.update_geometry()
         
         self.last_pos = current_pos
         self.update()
@@ -414,14 +596,18 @@ class ViewerWidget(QWidget):
                 self.selected_letter.position[1] += step
             elif axis == 'z':  # Перемещение по глобальной оси Z (вверх/вниз)
                 self.selected_letter.position[2] += step
+            # После перемещения обновляем трансформированные вершины
+            self.selected_letter.update_geometry()
             self.update()
 
     def reflect_selected(self, axis):
+        """Отражает выбранную букву по указанной оси"""
         if self.selected_letter:
             self.selected_letter.reflect(axis)
             self.update()
 
     def rotate_selected(self, axis, direction):
+        """Вращает выбранную букву вокруг указанной оси"""
         if self.selected_letter:
             self.selected_letter.rotate(axis, direction * self.rotation_step)
             self.update()
@@ -460,39 +646,97 @@ class MainWindow(QMainWindow):
         control_layout = QVBoxLayout(control_panel)
         main_layout.addWidget(control_panel, stretch=1)
         
-        # Группа параметров буквы
-        letter_group = QGroupBox("Параметры буквы")
-        letter_layout = QVBoxLayout(letter_group)
+        # Выбор активной буквы
+        letter_selector_group = QGroupBox("Выбор буквы")
+        letter_selector_layout = QVBoxLayout(letter_selector_group)
+        self.letter_combo = QComboBox()
+        self.letter_combo.addItems(["Буква С", "Буква Д"])
+        self.letter_combo.currentIndexChanged.connect(self.change_selected_letter)
+        letter_selector_layout.addWidget(self.letter_combo)
+        control_layout.addWidget(letter_selector_group)
         
-        # Высота
-        height_layout = QHBoxLayout()
-        height_layout.addWidget(QLabel("Высота:"))
-        height_spin = QDoubleSpinBox()
-        height_spin.setRange(0.1, 20.0)
-        height_spin.setValue(4.0)
-        height_spin.valueChanged.connect(self.update_letter_params)
-        height_layout.addWidget(height_spin)
-        letter_layout.addLayout(height_layout)
+        # Группа параметров букв
+        self.letter_params_group = QGroupBox("Параметры букв")
+        letter_params_layout = QVBoxLayout(self.letter_params_group)
         
-        # Ширина
-        width_layout = QHBoxLayout()
-        width_layout.addWidget(QLabel("Ширина:"))
-        width_spin = QDoubleSpinBox()
-        width_spin.setRange(0.1, 20.0)
-        width_spin.setValue(2.0)
-        width_spin.valueChanged.connect(self.update_letter_params)
-        width_layout.addWidget(width_spin)
-        letter_layout.addLayout(width_layout)
+        # Параметры для буквы С
+        self.c_params_widget = QWidget()
+        c_params_layout = QVBoxLayout(self.c_params_widget)
+        c_params_layout.setContentsMargins(0, 0, 0, 0)
         
-        # Глубина
-        depth_layout = QHBoxLayout()
-        depth_layout.addWidget(QLabel("Глубина:"))
-        depth_spin = QDoubleSpinBox()
-        depth_spin.setRange(0.1, 20.0)
-        depth_spin.setValue(1.0)
-        depth_spin.valueChanged.connect(self.update_letter_params)
-        depth_layout.addWidget(depth_spin)
-        letter_layout.addLayout(depth_layout)
+        # Высота для С
+        c_height_layout = QHBoxLayout()
+        c_height_layout.addWidget(QLabel("Высота:"))
+        self.c_height_spin = QDoubleSpinBox()
+        self.c_height_spin.setRange(0.1, 20.0)
+        self.c_height_spin.setValue(4.0)
+        self.c_height_spin.valueChanged.connect(lambda: self.update_letter_params("С"))
+        c_height_layout.addWidget(self.c_height_spin)
+        c_params_layout.addLayout(c_height_layout)
+        
+        # Ширина для С
+        c_width_layout = QHBoxLayout()
+        c_width_layout.addWidget(QLabel("Ширина:"))
+        self.c_width_spin = QDoubleSpinBox()
+        self.c_width_spin.setRange(0.1, 20.0)
+        self.c_width_spin.setValue(2.0)
+        self.c_width_spin.valueChanged.connect(lambda: self.update_letter_params("С"))
+        c_width_layout.addWidget(self.c_width_spin)
+        c_params_layout.addLayout(c_width_layout)
+        
+        # Глубина для С
+        c_depth_layout = QHBoxLayout()
+        c_depth_layout.addWidget(QLabel("Глубина:"))
+        self.c_depth_spin = QDoubleSpinBox()
+        self.c_depth_spin.setRange(0.1, 20.0)
+        self.c_depth_spin.setValue(1.0)
+        self.c_depth_spin.valueChanged.connect(lambda: self.update_letter_params("С"))
+        c_depth_layout.addWidget(self.c_depth_spin)
+        c_params_layout.addLayout(c_depth_layout)
+        
+        # Параметры для буквы Д
+        self.d_params_widget = QWidget()
+        d_params_layout = QVBoxLayout(self.d_params_widget)
+        d_params_layout.setContentsMargins(0, 0, 0, 0)
+        
+        # Высота для Д
+        d_height_layout = QHBoxLayout()
+        d_height_layout.addWidget(QLabel("Высота:"))
+        self.d_height_spin = QDoubleSpinBox()
+        self.d_height_spin.setRange(0.1, 20.0)
+        self.d_height_spin.setValue(4.0)
+        self.d_height_spin.valueChanged.connect(lambda: self.update_letter_params("Д"))
+        d_height_layout.addWidget(self.d_height_spin)
+        d_params_layout.addLayout(d_height_layout)
+        
+        # Ширина для Д
+        d_width_layout = QHBoxLayout()
+        d_width_layout.addWidget(QLabel("Ширина:"))
+        self.d_width_spin = QDoubleSpinBox()
+        self.d_width_spin.setRange(0.1, 20.0)
+        self.d_width_spin.setValue(2.0)
+        self.d_width_spin.valueChanged.connect(lambda: self.update_letter_params("Д"))
+        d_width_layout.addWidget(self.d_width_spin)
+        d_params_layout.addLayout(d_width_layout)
+        
+        # Глубина для Д
+        d_depth_layout = QHBoxLayout()
+        d_depth_layout.addWidget(QLabel("Глубина:"))
+        self.d_depth_spin = QDoubleSpinBox()
+        self.d_depth_spin.setRange(0.1, 20.0)
+        self.d_depth_spin.setValue(1.0)
+        self.d_depth_spin.valueChanged.connect(lambda: self.update_letter_params("Д"))
+        d_depth_layout.addWidget(self.d_depth_spin)
+        d_params_layout.addLayout(d_depth_layout)
+        
+        # Добавляем виджеты параметров в группу
+        letter_params_layout.addWidget(self.c_params_widget)
+        letter_params_layout.addWidget(self.d_params_widget)
+        
+        # По умолчанию показываем параметры для первой буквы
+        self.d_params_widget.hide()
+        
+        control_layout.addWidget(self.letter_params_group)
 
         # Группа управления перемещением
         movement_group = QGroupBox("Управление перемещением")
@@ -620,7 +864,6 @@ class MainWindow(QMainWindow):
         scale_layout.addWidget(scale_spin)
 
         # Добавляем группы в панель управления
-        control_layout.addWidget(letter_group)
         control_layout.addWidget(movement_group)
         control_layout.addWidget(rotation_group)
         control_layout.addWidget(scale_group)
@@ -641,20 +884,37 @@ class MainWindow(QMainWindow):
         control_layout.addStretch()
         
         # Сохраняем ссылки на спинбоксы
-        self.height_spin = height_spin
-        self.width_spin = width_spin
-        self.depth_spin = depth_spin
         self.step_spin = step_spin
         self.rotation_step_spin = rotation_step_spin
         self.scale_spin = scale_spin
+        
+        # Инициализируем выбор активной буквы
+        self.change_selected_letter(0)
+        
+    def change_selected_letter(self, index):
+        # Выбираем букву
+        if index == 0:  # Буква С
+            self.viewer.selected_letter = self.viewer.letters[0]
+            self.c_params_widget.show()
+            self.d_params_widget.hide()
+        else:  # Буква Д
+            self.viewer.selected_letter = self.viewer.letters[1]
+            self.c_params_widget.hide()
+            self.d_params_widget.show()
+        self.viewer.update()
 
-    def update_letter_params(self):
-        if self.viewer.selected_letter:
-            self.viewer.selected_letter.height = self.height_spin.value()
-            self.viewer.selected_letter.width = self.width_spin.value()
-            self.viewer.selected_letter.depth = self.depth_spin.value()
-            self.viewer.selected_letter.update_geometry()
-            self.viewer.update()
+    def update_letter_params(self, letter):
+        if letter == "С" and self.viewer.letters[0]:
+            self.viewer.letters[0].height = self.c_height_spin.value()
+            self.viewer.letters[0].width = self.c_width_spin.value()
+            self.viewer.letters[0].depth = self.c_depth_spin.value()
+            self.viewer.letters[0].update_geometry()
+        elif letter == "Д" and self.viewer.letters[1]:
+            self.viewer.letters[1].height = self.d_height_spin.value()
+            self.viewer.letters[1].width = self.d_width_spin.value()
+            self.viewer.letters[1].depth = self.d_depth_spin.value()
+            self.viewer.letters[1].update_geometry()
+        self.viewer.update()
 
     def update_movement_step(self, value):
         self.viewer.movement_step = value
