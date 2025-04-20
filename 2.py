@@ -3,7 +3,7 @@ import math
 from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
                               QHBoxLayout, QLabel, QSpinBox, QDoubleSpinBox, 
                               QPushButton, QComboBox, QGroupBox, QCheckBox)
-from PySide6.QtGui import QPainter, QPen, QColor
+from PySide6.QtGui import QPainter, QPen, QColor, QPolygon
 from PySide6.QtCore import Qt, QPoint
 
 class Letter3D:
@@ -375,6 +375,13 @@ class ViewerWidget(QWidget):
         self.movement_step = 0.5  # Шаг перемещения для кнопок
         self.rotation_step = 5  # Начальный шаг поворота в градусах
         
+        # Настройки для второго этапа:
+        self.render_mode = "z-buffer"  # Режим рендеринга: "wireframe", "depth-sort", "z-buffer"
+        self.show_faces = True  # Показывать заливку граней
+        self.show_edges = True  # Показывать рёбра
+        self.fill_opacity = 180  # Непрозрачность заливки (0-255)
+        self.edge_thickness = 1  # Толщина рёбер в пикселях
+        
         # Добавляем буквы
         self.add_letter('С', 4, 2, 1, position=[-3, 0, 0])
         self.add_letter('Д', 4, 2, 1, position=[3, 0, 0])
@@ -469,45 +476,82 @@ class ViewerWidget(QWidget):
     def get_face_depth(self, face, letter):
         # Вычисляем среднюю Z-координату грани после всех преобразований
         z_sum = 0
+        count = 0
+        
         for vertex in face['vertices']:
-            # Применяем позицию объекта
-            transformed = [vertex[0] + letter.position[0], vertex[1] + letter.position[1], vertex[2] + letter.position[2]]
+            if isinstance(vertex, list):
+                # Это локальные координаты
+                local_vertex = vertex
+                global_vertex = [
+                    local_vertex[0] + letter.position[0],
+                    local_vertex[1] + letter.position[1],
+                    local_vertex[2] + letter.position[2]
+                ]
+            else:
+                # Это индекс вершины в списке transformed_vertices
+                global_vertex = letter.transformed_vertices[vertex]
             
             # Поворот камеры
             angle_y = math.radians(self.camera_rot[1])
             angle_x = math.radians(self.camera_rot[0])
             
             # Поворот вокруг Y
-            x_rot = transformed[0] * math.cos(angle_y) + transformed[2] * math.sin(angle_y)
-            z_rot = -transformed[0] * math.sin(angle_y) + transformed[2] * math.cos(angle_y)
-            transformed = [x_rot, transformed[1], z_rot]
+            x_rot = global_vertex[0] * math.cos(angle_y) + global_vertex[2] * math.sin(angle_y)
+            z_rot = -global_vertex[0] * math.sin(angle_y) + global_vertex[2] * math.cos(angle_y)
             
             # Поворот вокруг X
-            y_rot = transformed[1] * math.cos(angle_x) - transformed[2] * math.sin(angle_x)
-            z_rot = transformed[1] * math.sin(angle_x) + transformed[2] * math.cos(angle_x)
+            y_rot = global_vertex[1] * math.cos(angle_x) - z_rot * math.sin(angle_x)
+            z_rot = global_vertex[1] * math.sin(angle_x) + z_rot * math.cos(angle_x)
             
             z_sum += z_rot
+            count += 1
         
-        return z_sum / len(face['vertices'])
+        return z_sum / count if count > 0 else 0
 
     def is_face_visible(self, face, letter):
-        # Вычисляем нормаль грани в мировых координатах с учетом поворота камеры
-        normal = face['normal']
+        """Проверяет видимость грани в зависимости от её нормали и положения камеры"""
+        # Вычисляем нормаль грани в мировых координатах
+        normal = face['normal'].copy()
         
-        # Вычисляем вектор направления взгляда (от точки на грани к камере)
+        # Нормализуем нормаль (убедимся, что длина = 1)
+        normal_length = math.sqrt(normal[0]**2 + normal[1]**2 + normal[2]**2)
+        if normal_length > 0:
+            normal = [normal[0]/normal_length, normal[1]/normal_length, normal[2]/normal_length]
+        
+        # Вычисляем центр грани
         center = [0, 0, 0]
-        for vertex in face['vertices']:
-            center[0] += vertex[0] + letter.position[0]
-            center[1] += vertex[1] + letter.position[1]
-            center[2] += vertex[2] + letter.position[2]
-        center[0] /= len(face['vertices'])
-        center[1] /= len(face['vertices'])
-        center[2] /= len(face['vertices'])
+        count = 0
         
-        view_dir = [self.camera_pos[0] - center[0], self.camera_pos[1] - center[1], self.camera_pos[2] - center[2]]
-        view_dir[0] /= math.sqrt(view_dir[0]**2 + view_dir[1]**2 + view_dir[2]**2)
-        view_dir[1] /= math.sqrt(view_dir[0]**2 + view_dir[1]**2 + view_dir[2]**2)
-        view_dir[2] /= math.sqrt(view_dir[0]**2 + view_dir[1]**2 + view_dir[2]**2)
+        for vertex in face['vertices']:
+            if isinstance(vertex, list):
+                # Это локальные координаты
+                center[0] += vertex[0] + letter.position[0]
+                center[1] += vertex[1] + letter.position[1]
+                center[2] += vertex[2] + letter.position[2]
+            else:
+                # Это индекс вершины в списке transformed_vertices
+                v = letter.transformed_vertices[vertex]
+                center[0] += v[0]
+                center[1] += v[1]
+                center[2] += v[2]
+            count += 1
+            
+        if count > 0:
+            center[0] /= count
+            center[1] /= count
+            center[2] /= count
+        
+        # Вычисляем вектор от центра грани к камере
+        view_dir = [
+            self.camera_pos[0] - center[0], 
+            self.camera_pos[1] - center[1], 
+            self.camera_pos[2] - center[2]
+        ]
+        
+        # Нормализуем вектор направления взгляда
+        view_length = math.sqrt(view_dir[0]**2 + view_dir[1]**2 + view_dir[2]**2)
+        if view_length > 0:
+            view_dir = [view_dir[0]/view_length, view_dir[1]/view_length, view_dir[2]/view_length]
         
         # Грань видима, если угол между нормалью и направлением взгляда меньше 90 градусов
         dot_product = normal[0] * view_dir[0] + normal[1] * view_dir[1] + normal[2] * view_dir[2]
@@ -524,30 +568,135 @@ class ViewerWidget(QWidget):
         self.draw_grid(painter)
         self.draw_axes(painter)
         
-        # Рисуем каждую букву
+        # Используем только режим Z-буфера
+        self.draw_z_buffer(painter)
+        
+        # Рисуем точки центра букв
         for letter in self.letters:
-            # Рисуем все ребра
-            painter.setPen(QPen(Qt.white, 2))
-            for edge in letter.edges:
-                # Используем уже трансформированные вершины
-                v1 = letter.transformed_vertices[edge[0]]
-                v2 = letter.transformed_vertices[edge[1]]
-                
-                p1 = self.project_point(v1)
-                p2 = self.project_point(v2)
-                
-                if p1 and p2:
-                    painter.drawLine(p1, p2)
-            
-            # Рисуем точку центра буквы, если включено отображение
             if hasattr(letter, 'show_center') and letter.show_center:
                 center_point = self.project_point(letter.transformed_center_point)
                 if center_point:
                     # Используем красный цвет для точки центра
                     painter.setPen(QPen(Qt.red, 6))
-                    painter.setBrush(QColor(255, 0, 0))  # Заполняем красным цветом
-                    # Рисуем точку большего размера (6 пикселей)
+                    painter.setBrush(QColor(255, 0, 0))
+                    # Рисуем точку большего размера
                     painter.drawEllipse(center_point, 3, 3)
+
+    def draw_z_buffer(self, painter):
+        """Отображение с использованием Z-буфера (имитация)"""
+        # Собираем все грани всех букв для Z-буфера
+        all_faces = []
+        for letter in self.letters:
+            for face in letter.faces:
+                # Пропускаем невидимые грани
+                if not self.is_face_visible(face, letter):
+                    continue
+                
+                depth = self.get_face_depth(face, letter)
+                color = self.get_face_color(face, letter)
+                
+                # Усиливаем контраст в цвете для Z-буфера
+                enhanced_color = []
+                for c in color:
+                    enhanced_color.append(min(255, int(c * 1.2)))
+                
+                # Преобразуем вершины грани в экранные координаты
+                screen_vertices = []
+                all_vertices_visible = True
+                
+                for vertex in face['vertices']:
+                    if isinstance(vertex, list):
+                        # Это локальные координаты
+                        local_vertex = vertex
+                        global_vertex = [
+                            local_vertex[0] + letter.position[0],
+                            local_vertex[1] + letter.position[1],
+                            local_vertex[2] + letter.position[2]
+                        ]
+                        screen_pos = self.project_point(global_vertex)
+                    else:
+                        # Это индекс вершины в списке transformed_vertices
+                        global_vertex = letter.transformed_vertices[vertex]
+                        screen_pos = self.project_point(global_vertex)
+                    
+                    if screen_pos:
+                        screen_vertices.append(screen_pos)
+                    else:
+                        all_vertices_visible = False
+                        break
+                
+                # Добавляем грань только если все её вершины видимы и их достаточно для полигона
+                if all_vertices_visible and len(screen_vertices) >= 3:
+                    all_faces.append({
+                        'screen_vertices': screen_vertices,
+                        'depth': depth,
+                        'color': enhanced_color,
+                        'letter': letter
+                    })
+        
+        # Сортируем грани по глубине (от дальних к ближним)
+        all_faces.sort(key=lambda f: f['depth'], reverse=True)
+        
+        # Рисуем грани в порядке от дальних к ближним
+        for face in all_faces:
+            points = face['screen_vertices']
+            color = face['color']
+            
+            if len(points) < 3:
+                continue  # Пропускаем, если недостаточно точек для полигона
+                
+            # Создаем полигон для отрисовки
+            polygon = QPolygon()
+            for point in points:
+                polygon.append(point)
+            
+            # Рисуем заливку если включено отображение граней
+            if self.show_faces:
+                # Используем высокую непрозрачность для лучшей визуализации
+                face_color = QColor(color[0], color[1], color[2], self.fill_opacity)
+                painter.setBrush(face_color)
+                painter.setPen(Qt.NoPen)
+                painter.drawPolygon(polygon)
+            
+            # Рисуем контур грани если включено отображение рёбер
+            if self.show_edges:
+                edge_color = QColor(color[0], color[1], color[2])
+                edge_color.setAlpha(255)  # Полностью непрозрачные рёбра
+                painter.setBrush(Qt.NoBrush)
+                painter.setPen(QPen(edge_color, self.edge_thickness))
+                painter.drawPolygon(polygon)
+
+    def get_face_color(self, face, letter):
+        """Вычисляет цвет грани в зависимости от освещения"""
+        # Базовый цвет в зависимости от типа буквы
+        if letter.letter == 'С':
+            base_color = [100, 100, 255]  # Синий для буквы С
+        else:
+            base_color = [255, 100, 100]  # Красный для буквы Д
+        
+        # Вычисляем нормаль грани в мировых координатах
+        normal = face['normal']
+        
+        # Направление света (сверху-сзади)
+        light_dir = [0, -0.5, -1]
+        # Нормализуем направление света
+        light_length = math.sqrt(light_dir[0]**2 + light_dir[1]**2 + light_dir[2]**2)
+        light_dir = [light_dir[0]/light_length, light_dir[1]/light_length, light_dir[2]/light_length]
+        
+        # Вычисляем косинус угла между нормалью и направлением света
+        dot_product = abs(normal[0] * light_dir[0] + normal[1] * light_dir[1] + normal[2] * light_dir[2])
+        
+        # Коэффициент освещенности (от 0.3 до 1.0, чтобы не было полностью черных граней)
+        light_factor = 0.3 + 0.7 * dot_product
+        
+        # Применяем освещение к базовому цвету
+        color = [
+            min(255, int(base_color[0] * light_factor)),
+            min(255, int(base_color[1] * light_factor)),
+            min(255, int(base_color[2] * light_factor))
+        ]
+        
+        return color
 
     def mousePressEvent(self, event):
         self.last_pos = QPoint(int(event.position().x()), int(event.position().y()))
@@ -625,6 +774,33 @@ class ViewerWidget(QWidget):
         if self.selected_letter:
             self.selected_letter.set_uniform_scale(scale)
             self.update()
+
+    def set_render_mode(self, mode):
+        """Устанавливает режим отображения"""
+        self.render_mode = mode
+        self.update()
+    
+    def toggle_faces(self, show):
+        """Включает/выключает отображение заливки граней"""
+        print(f"ViewerWidget: toggling faces to {show}")
+        self.show_faces = show
+        self.update()
+    
+    def toggle_edges(self, show):
+        """Включает/выключает отображение рёбер"""
+        print(f"ViewerWidget: toggling edges to {show}")
+        self.show_edges = show
+        self.update()
+    
+    def set_fill_opacity(self, opacity):
+        """Устанавливает непрозрачность заливки"""
+        self.fill_opacity = opacity
+        self.update()
+    
+    def set_edge_thickness(self, thickness):
+        """Устанавливает толщину рёбер"""
+        self.edge_thickness = thickness
+        self.update()
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -862,12 +1038,58 @@ class MainWindow(QMainWindow):
         scale_spin.setSingleStep(0.1)
         scale_spin.valueChanged.connect(lambda v: self.viewer.set_uniform_scale(v))
         scale_layout.addWidget(scale_spin)
-
-        # Добавляем группы в панель управления
+        
+        # Группа настройки отображения (Этап 2)
+        render_group = QGroupBox("Настройки отображения (Этап 2)")
+        render_layout = QVBoxLayout(render_group)
+        
+        # Выбор режима отображения
+        render_mode_layout = QHBoxLayout()
+        render_mode_layout.addWidget(QLabel("Режим отображения:"))
+        self.render_mode_combo = QComboBox()
+        self.render_mode_combo.addItems(["Каркас (wireframe)", "Сортировка по глубине (depth-sort)", "Z-буфер (z-buffer)"])
+        self.render_mode_combo.setCurrentIndex(0)  # По умолчанию - каркас
+        self.render_mode_combo.currentIndexChanged.connect(self.change_render_mode)
+        render_mode_layout.addWidget(self.render_mode_combo)
+        render_layout.addLayout(render_mode_layout)
+        
+        # Флажки для отображения граней и рёбер
+        self.show_faces_check = QCheckBox("Показывать грани")
+        self.show_faces_check.setChecked(self.viewer.show_faces)
+        self.show_faces_check.stateChanged.connect(self.toggle_faces)
+        render_layout.addWidget(self.show_faces_check)
+        
+        self.show_edges_check = QCheckBox("Показывать рёбра")
+        self.show_edges_check.setChecked(self.viewer.show_edges)
+        self.show_edges_check.stateChanged.connect(self.toggle_edges)
+        render_layout.addWidget(self.show_edges_check)
+        
+        # Настройка непрозрачности заливки
+        opacity_layout = QHBoxLayout()
+        opacity_layout.addWidget(QLabel("Непрозрачность заливки:"))
+        opacity_spin = QSpinBox()
+        opacity_spin.setRange(0, 255)
+        opacity_spin.setValue(self.viewer.fill_opacity)
+        opacity_spin.valueChanged.connect(self.viewer.set_fill_opacity)
+        opacity_layout.addWidget(opacity_spin)
+        render_layout.addLayout(opacity_layout)
+        
+        # Настройка толщины рёбер
+        edge_thickness_layout = QHBoxLayout()
+        edge_thickness_layout.addWidget(QLabel("Толщина рёбер:"))
+        edge_thickness_spin = QSpinBox()
+        edge_thickness_spin.setRange(1, 5)
+        edge_thickness_spin.setValue(self.viewer.edge_thickness)
+        edge_thickness_spin.valueChanged.connect(self.viewer.set_edge_thickness)
+        edge_thickness_layout.addWidget(edge_thickness_spin)
+        render_layout.addLayout(edge_thickness_layout)
+        
+        # Добавляем все группы в панель управления
         control_layout.addWidget(movement_group)
         control_layout.addWidget(rotation_group)
         control_layout.addWidget(scale_group)
         control_layout.addWidget(reflection_group)
+        control_layout.addWidget(render_group)  # Добавляем новую группу для Этапа 2
         
         # Добавляем подсказки по управлению
         help_text = QLabel(
@@ -887,9 +1109,13 @@ class MainWindow(QMainWindow):
         self.step_spin = step_spin
         self.rotation_step_spin = rotation_step_spin
         self.scale_spin = scale_spin
+        self.opacity_spin = opacity_spin
+        self.edge_thickness_spin = edge_thickness_spin
         
         # Инициализируем выбор активной буквы
         self.change_selected_letter(0)
+        # Инициализируем режим отображения
+        self.change_render_mode(0)  # По умолчанию - каркас
         
     def change_selected_letter(self, index):
         # Выбираем букву
@@ -902,6 +1128,44 @@ class MainWindow(QMainWindow):
             self.c_params_widget.hide()
             self.d_params_widget.show()
         self.viewer.update()
+    
+    def change_render_mode(self, index):
+        # Изменяем режим отображения
+        modes = ["wireframe", "depth-sort", "z-buffer"]
+        self.viewer.set_render_mode(modes[index])
+        # Обновляем UI в зависимости от режима
+        self.update_display_settings_ui(modes[index])
+    
+    def update_display_settings_ui(self, mode):
+        # Обновляем UI в зависимости от режима отображения
+        if mode == "wireframe":
+            # В режиме каркаса грани не отображаются
+            self.show_faces_check.setChecked(False)
+            self.show_faces_check.setEnabled(False)
+            self.opacity_spin.setEnabled(False)
+            
+            # Рёбра всегда включены в режиме каркаса
+            self.show_edges_check.setChecked(True)
+            self.show_edges_check.setEnabled(False)
+            self.edge_thickness_spin.setEnabled(True)
+        else:
+            # В других режимах все настройки доступны
+            self.show_faces_check.setEnabled(True)
+            self.opacity_spin.setEnabled(True)
+            self.show_edges_check.setEnabled(True)
+            self.edge_thickness_spin.setEnabled(True)
+    
+    def toggle_faces(self, state):
+        # Включаем/выключаем отображение граней
+        show = state == Qt.Checked
+        print(f"MainWindow: toggling faces to {show}, state={state}")
+        self.viewer.toggle_faces(show)
+        
+    def toggle_edges(self, state):
+        # Включаем/выключаем отображение рёбер
+        show = state == Qt.Checked
+        print(f"MainWindow: toggling edges to {show}, state={state}")
+        self.viewer.toggle_edges(show)
 
     def update_letter_params(self, letter):
         if letter == "С" and self.viewer.letters[0]:
